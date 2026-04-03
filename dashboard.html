@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CityPulse AI - Smart City Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #030712; color: #f8fafc; margin: 0; }
+        * { scrollbar-width: thin; scrollbar-color: #334155 #1e293b; }
+        *::-webkit-scrollbar { width: 6px; }
+        *::-webkit-scrollbar-track { background: #1e293b; }
+        *::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .glass { background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(51, 65, 85, 0.5); }
+        .glow-emerald { box-shadow: 0 0 20px rgba(16, 185, 129, 0.3); }
+        .pulse-glow { animation: pulse-glow 2s infinite; }
+        @keyframes pulse-glow { 0%,100%{box-shadow:0 0 5px rgba(239,68,68,.3)} 50%{box-shadow:0 0 20px rgba(239,68,68,.6)} }
+        .page { display: none; }
+        .page.active { display: block; }
+    </style>
+</head>
+<body>
+    <div id="app" class="flex items-center justify-center min-h-screen">
+        <div class="text-center"><i class="fas fa-circle-notch fa-spin text-4xl text-emerald-400 mb-4"></i><p class="text-slate-400">Loading...</p></div>
+    </div>
+    <script>
+        // Auto-detect API URL based on current location
+        const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? 'http://localhost:5000/api' 
+            : '/api';
+        let chartMain = null, chartAir = null, chartTraffic = null;
+        let currentPage = 'dashboard';
+        
+        // Almaty timezone
+        const ALMATY_OFFSET = 6; // UTC+6
+        
+        function getAlmatyTime() {
+            const now = new Date();
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+            const almaty = new Date(utc + (3600000 * ALMATY_OFFSET));
+            return almaty;
+        }
+        
+        function formatAlmatyTime(date) {
+            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Almaty' });
+        }
+        
+        async function fetchDashboard() {
+            try {
+                const [summaryRes, metricsRes] = await Promise.all([
+                    fetch(API_URL + '/dashboard/summary').then(r => r.json()),
+                    fetch(API_URL + '/metrics/history').then(r => r.json())
+                ]);
+                return { summary: summaryRes, metrics: metricsRes || [] };
+            } catch(e) { return { summary: {}, metrics: [] }; }
+        }
+        
+        async function fetchZones() {
+            try {
+                const res = await fetch(API_URL + '/metrics/live').then(r => r.json());
+                return res || [];
+            } catch(e) { return []; }
+        }
+        
+        async function triggerAnomaly() {
+            const btn = document.querySelector('.trigger-btn');
+            if (!btn) return;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+            btn.disabled = true;
+            try {
+                await fetch(API_URL + '/debug/trigger', {method:'POST'});
+                setTimeout(() => { btn.innerHTML = '⚠️ Trigger Demo'; btn.disabled = false; loadDashboard(); }, 3000);
+            } catch(e) { alert('Error: ' + e.message); btn.innerHTML = '⚠️ Trigger Demo'; btn.disabled = false; }
+        }
+        
+        function handleNavClick(page) {
+            currentPage = page;
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(page + '-page').classList.add('active');
+            document.querySelectorAll('nav button').forEach(b => {
+                b.classList.remove('bg-emerald-500/15', 'text-emerald-400', 'border-emerald-500/30');
+                b.classList.add('text-slate-400', 'hover:bg-slate-800');
+            });
+            event.target.closest('button').classList.add('bg-emerald-500/15', 'text-emerald-400', 'border-emerald-500/30');
+            event.target.closest('button').classList.remove('text-slate-400', 'hover:bg-slate-800');
+            
+            if (page === 'zones') loadZonesPage();
+            if (page === 'ai-settings') loadAISettingsPage();
+            if (page === 'settings') loadSettingsPage();
+        }
+        
+        async function sendChatMessage() {
+            const input = document.getElementById('chat-input');
+            const messages = document.getElementById('chat-messages');
+            const question = input.value.trim();
+            if (!question) return;
+            
+            messages.innerHTML += `<div class="flex gap-3 justify-end">
+                <div class="bg-emerald-500/20 rounded-xl p-3 text-white">${question}</div>
+                <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0"><i class="fas fa-user text-white text-sm"></i></div>
+            </div>`;
+            messages.innerHTML += `<div class="flex gap-3">
+                <div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div>
+                <div class="bg-slate-800 rounded-xl p-3 text-slate-300"><i class="fas fa-spinner fa-spin text-emerald-400"></i> Thinking...</div>
+            </div>`;
+            input.value = '';
+            messages.scrollTop = messages.scrollHeight;
+            
+            try {
+                const res = await fetch(API_URL + '/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({question, context: {metrics: (await fetchDashboard()).metrics, zones: (await fetchDashboard()).summary.zones}})
+                });
+                const data = await res.json();
+                const msgs = messages.querySelectorAll('.fa-spinner');
+                if (msgs.length > 0) {
+                    msgs[msgs.length - 1].closest('.flex').innerHTML = `<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div><div class="bg-slate-800 rounded-xl p-3 text-slate-300">${data.response || 'I can help you understand the city metrics. Try asking about air quality or traffic in specific zones.'}</div>`;
+                }
+            } catch(e) {
+                const msgs = messages.querySelectorAll('.fa-spinner');
+                if (msgs.length > 0) {
+                    msgs[msgs.length - 1].closest('.flex').innerHTML = `<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div><div class="bg-slate-800 rounded-xl p-3 text-slate-300">I'm having trouble connecting to the AI. Try asking about current metrics - I can show you real-time data!</div>`;
+                }
+            }
+        }
+        
+        async function loadDashboard() {
+            const data = await fetchDashboard();
+            const summary = data.summary || {};
+            const metrics = data.metrics || [];
+            const kpis = summary.kpis || {};
+            const zones = summary.zones || [];
+            
+            let insights = [];
+            try {
+                const insightsRes = await fetch(API_URL + '/dashboard/insights/active').then(r => r.json());
+                insights = insightsRes || [];
+            } catch(e) { insights = []; }
+            
+            const recentMetrics = metrics.slice(-30).map(d => ({
+                time: formatAlmatyTime(new Date(d.created_at)),
+                pm25: d.pm25_level, speed: d.traffic_speed
+            }));
+            
+            const stats = [
+                { title: 'Air Quality (PM2.5)', value: kpis.avgAirQuality || '--', unit: 'μg/m³', icon: 'fa-wind', color: (kpis.avgAirQuality || 0) > 100 ? 'text-red-400' : 'text-emerald-400', bg: (kpis.avgAirQuality || 0) > 100 ? 'bg-red-500/20' : 'bg-emerald-500/20' },
+                { title: 'Traffic Flow', value: kpis.trafficFlow || '--', unit: 'km/h', icon: 'fa-gauge-high', color: 'text-blue-400', bg: 'bg-blue-500/20' },
+                { title: 'Active Alerts', value: kpis.activeAlerts || 0, icon: 'fa-triangle-exclamation', color: (kpis.activeAlerts || 0) > 0 ? 'text-red-400' : 'text-slate-400', bg: (kpis.activeAlerts || 0) > 0 ? 'bg-red-500/20' : 'bg-slate-800' },
+                { title: 'System Health', value: kpis.systemHealth || '...', icon: 'fa-heart-pulse', color: kpis.systemHealth === 'Healthy' ? 'text-emerald-400' : 'text-yellow-400', bg: kpis.systemHealth === 'Healthy' ? 'bg-emerald-500/20' : 'bg-yellow-500/20' }
+            ];
+            
+            const aiInsights = insights.length > 0 
+                ? insights.map(insight => `
+                    <div class="p-3 rounded-xl border ${insight.severity === 'critical' || insight.severity === 'high' ? 'border-red-500/40 bg-red-500/10' : insight.severity === 'med' || insight.severity === 'medium' ? 'border-yellow-500/40 bg-yellow-500/10' : 'border-emerald-500/40 bg-emerald-500/10'}">
+                        <div class="flex justify-between mb-2">
+                            <span class="px-2 py-0.5 rounded-lg text-xs uppercase ${insight.severity === 'critical' || insight.severity === 'high' ? 'bg-red-500/30 text-red-400' : insight.severity === 'med' || insight.severity === 'medium' ? 'bg-yellow-500/30 text-yellow-400' : 'bg-emerald-500/30 text-emerald-400'}">${insight.severity || 'info'}</span>
+                            <span class="text-xs text-slate-500">${insight.zones?.name || 'System'}</span>
+                        </div>
+                        <h4 class="text-sm font-semibold text-white mb-1">${insight.summary || 'Analyzing...'}</h4>
+                        ${insight.action_plan ? `<p class="text-xs text-slate-500 uppercase mb-1">Actions:</p>` : ''}
+                        ${insight.action_plan ? (Array.isArray(insight.action_plan) ? insight.action_plan : JSON.parse(insight.action_plan)).slice(0,2).map(a => `<div class="text-xs text-slate-400 flex gap-2 mb-1"><span class="text-emerald-400">→</span>${a}</div>`).join('') : ''}
+                    </div>
+                `).join('')
+                : generateAIInsights(recentMetrics);
+            
+            document.getElementById('app').innerHTML = `
+                <div class="flex min-h-screen">
+                    <aside class="w-64 bg-slate-900/80 border-r border-slate-800 fixed h-full flex flex-col backdrop-blur-xl">
+                        <div class="p-5 border-b border-slate-800">
+                            <div class="flex items-center gap-3">
+                                <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg glow-emerald">
+                                    <i class="fas fa-bolt text-white text-lg"></i>
+                                </div>
+                                <div><h1 class="text-xl font-bold text-white">CityPulse</h1><p class="text-xs text-emerald-400">AI Dashboard</p></div>
+                            </div>
+                        </div>
+                        <nav class="flex-1 p-4 space-y-2">
+                            <button onclick="handleNavClick('dashboard')" class="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                <i class="fas fa-chart-line w-5"></i> Dashboard
+                            </button>
+                            <button onclick="handleNavClick('zones')" class="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-slate-400 hover:bg-slate-800">
+                                <i class="fas fa-map-marked-alt w-5"></i> Zones
+                            </button>
+                            <button onclick="handleNavClick('chat')" class="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-slate-400 hover:bg-slate-800">
+                                <i class="fas fa-comments w-5"></i> AI Chat
+                            </button>
+                            <button onclick="handleNavClick('ai-settings')" class="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-slate-400 hover:bg-slate-800">
+                                <i class="fas fa-robot w-5"></i> AI Settings
+                            </button>
+                            <button onclick="handleNavClick('settings')" class="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-slate-400 hover:bg-slate-800">
+                                <i class="fas fa-cog w-5"></i> Settings
+                            </button>
+                        </nav>
+                        <div class="p-4 border-t border-slate-800">
+                            <div class="flex items-center gap-2 text-xs text-slate-500">
+                                <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                                <span>System Online</span>
+                                <span class="ml-auto text-emerald-400">${formatAlmatyTime(getAlmatyTime())}</span>
+                            </div>
+                        </div>
+                    </aside>
+                    
+                    <main class="flex-1 ml-64 p-6 page active" id="dashboard-page">
+                        <div class="flex items-center justify-between mb-6">
+                            <div><h1 class="text-2xl font-bold text-white">Dashboard</h1><p class="text-slate-400 text-sm">Real-time Smart City Monitoring • Almaty</p></div>
+                            <div class="flex items-center gap-3">
+                                <span class="text-xs text-slate-500">${formatAlmatyTime(getAlmatyTime())}</span>
+                                <button onclick="loadDashboard()" class="p-2.5 rounded-xl bg-slate-800 text-slate-400 hover:bg-slate-700"><i class="fas fa-sync-alt"></i></button>
+                                <button onclick="triggerAnomaly()" class="trigger-btn px-4 py-2.5 bg-red-500/20 text-red-400 rounded-xl text-sm pulse-glow border border-red-500/30">⚠️ Trigger Demo</button>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-4 gap-4 mb-6">
+                            ${stats.map(s => `<div class="glass rounded-2xl p-5">
+                                <div class="flex items-center justify-between mb-3">
+                                    <span class="text-xs text-slate-400 uppercase">${s.title}</span>
+                                    <div class="w-8 h-8 rounded-lg ${s.bg} flex items-center justify-center"><i class="fas ${s.icon} ${s.color}"></i></div>
+                                </div>
+                                <div class="flex items-end gap-1"><span class="text-3xl font-bold ${s.color}">${s.value}</span>${s.unit ? `<span class="text-sm text-slate-500 mb-1">${s.unit}</span>` : ''}</div>
+                            </div>`).join('')}
+                        </div>
+                        
+                        <div class="grid grid-cols-7 gap-4 mb-6">
+                            <div class="col-span-5"><div class="glass rounded-2xl p-5" style="height:380px">
+                                <h3 class="text-lg font-semibold text-white mb-4"><i class="fas fa-chart-area text-emerald-400 mr-2"></i>Traffic & Air Quality (Almaty Time)</h3>
+                                <canvas id="mainChart"></canvas>
+                            </div></div>
+                            <div class="col-span-2"><div class="glass rounded-2xl h-full">
+                                <div class="p-4 border-b border-slate-800 flex items-center gap-2">
+                                    <i class="fas fa-robot text-emerald-400"></i>
+                                    <span class="font-semibold text-white">AI Dispatcher</span>
+                                    <span class="ml-auto text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">LIVE</span>
+                                </div>
+                                <div class="p-3 space-y-3 max-h-[300px] overflow-y-auto">${aiInsights}</div>
+                            </div></div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="glass rounded-2xl p-5" style="height:280px">
+                                <h3 class="text-lg font-semibold text-white mb-4"><i class="fas fa-wind text-red-400 mr-2"></i>Air Quality (PM2.5)</h3>
+                                <canvas id="airChart"></canvas>
+                            </div>
+                            <div class="glass rounded-2xl p-5" style="height:280px">
+                                <h3 class="text-lg font-semibold text-white mb-4"><i class="fas fa-car text-blue-400 mr-2"></i>Traffic Speed</h3>
+                                <canvas id="trafficChart"></canvas>
+                            </div>
+                        </div>
+                    </main>
+                    
+                    <main class="flex-1 ml-64 p-6 page" id="zones-page">
+                        <div class="flex items-center justify-between mb-6">
+                            <div><h1 class="text-2xl font-bold text-white">Zones</h1><p class="text-slate-400 text-sm">District Monitoring • Almaty</p></div>
+                        </div>
+                        <div id="zones-content" class="glass rounded-2xl p-6"><div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-emerald-400"></i></div></div>
+                    </main>
+                    
+                    <main class="flex-1 ml-64 p-6 page" id="chat-page">
+                        <div class="flex items-center justify-between mb-6">
+                            <div><h1 class="text-2xl font-bold text-white">AI Assistant</h1><p class="text-slate-400 text-sm">Ask about city metrics and anomalies</p></div>
+                        </div>
+                        <div class="glass rounded-2xl p-6" style="height: calc(100vh - 180px); display: flex; flex-direction: column;">
+                            <div id="chat-messages" class="flex-1 overflow-y-auto space-y-4 mb-4" style="max-height: calc(100% - 80px);">
+                                <div class="flex gap-3">
+                                    <div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div>
+                                    <div class="bg-slate-800 rounded-xl p-4 text-slate-300">Hello! I'm your CityPulse AI assistant. Ask me about air quality, traffic, or city anomalies. For example: "Why is PM2.5 high in Alatau?"</div>
+                                </div>
+                            </div>
+                            <div class="flex gap-3">
+                                <input type="text" id="chat-input" placeholder="Ask a question about the city..." class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500" onkeypress="if(event.key==='Enter')sendChatMessage()">
+                                <button onclick="sendChatMessage()" class="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium"><i class="fas fa-paper-plane"></i></button>
+                            </div>
+                        </div>
+                    </main>
+                    
+                    <main class="flex-1 ml-64 p-6 page" id="ai-settings-page">
+                        <div class="flex items-center justify-between mb-6">
+                            <div><h1 class="text-2xl font-bold text-white">AI Settings</h1><p class="text-slate-400 text-sm">Configure AI Analysis Parameters</p></div>
+                        </div>
+                        <div id="ai-settings-content" class="glass rounded-2xl p-6"><div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-emerald-400"></i></div></div>
+                    </main>
+                    
+                    <main class="flex-1 ml-64 p-6 page" id="settings-page">
+                        <div class="flex items-center justify-between mb-6">
+                            <div><h1 class="text-2xl font-bold text-white">Settings</h1><p class="text-slate-400 text-sm">System Configuration</p></div>
+                        </div>
+                        <div id="settings-content" class="glass rounded-2xl p-6"><div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-emerald-400"></i></div></div>
+                    </main>
+                </div>
+            `;
+            
+            if (chartMain) chartMain.destroy();
+            if (chartAir) chartAir.destroy();
+            if (chartTraffic) chartTraffic.destroy();
+            
+            const ctxMain = document.getElementById('mainChart').getContext('2d');
+            chartMain = new Chart(ctxMain, { type: 'line', data: { labels: recentMetrics.map(d => d.time), datasets: [{ label: 'PM2.5', data: recentMetrics.map(d => d.pm25), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4 }, { label: 'Speed', data: recentMetrics.map(d => d.speed), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.4 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51,65,85,0.3)' } }, y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51,65,85,0.3)' } } }, plugins: { legend: { labels: { color: '#94a3b8' } } } } });
+            
+            const ctxAir = document.getElementById('airChart').getContext('2d');
+            chartAir = new Chart(ctxAir, { type: 'bar', data: { labels: recentMetrics.map(d => d.time), datasets: [{ label: 'PM2.5', data: recentMetrics.map(d => d.pm25), backgroundColor: recentMetrics.map(d => d.pm25 > 100 ? '#ef4444' : d.pm25 > 50 ? '#fbbf34' : '#22c55e'), borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#64748b' } } }, plugins: { legend: { display: false } } } });
+            
+            const ctxTraffic = document.getElementById('trafficChart').getContext('2d');
+            chartTraffic = new Chart(ctxTraffic, { type: 'line', data: { labels: recentMetrics.map(d => d.time), datasets: [{ label: 'Speed', data: recentMetrics.map(d => d.speed), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.2)', fill: true, tension: 0.4 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#64748b' }, min: 0 } }, plugins: { legend: { display: false } } } });
+        }
+        
+        async function loadZonesPage() {
+            const zones = await fetchZones();
+            const zonesData = [
+                { name: 'Alatau District', description: 'Southern residential area with high vegetation', icon: 'fa-tree', color: 'text-emerald-400' },
+                { name: 'Bostandyk District', description: 'Central business district with heavy traffic', icon: 'fa-building', color: 'text-blue-400' },
+                { name: 'Medeu District', description: 'Mountain area with tourism activity', icon: 'fa-mountain', color: 'text-purple-400' }
+            ];
+            
+            document.getElementById('zones-content').innerHTML = `
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    ${zonesData.map((z, i) => `
+                        <div class="p-4 rounded-xl border border-slate-700 hover:border-emerald-500/50 transition-all">
+                            <div class="flex items-center gap-3 mb-3">
+                                <div class="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center">
+                                    <i class="fas ${z.icon} ${z.color}"></i>
+                                </div>
+                                <div><h3 class="font-semibold text-white">${z.name}</h3><p class="text-xs text-slate-500">${z.description}</p></div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div class="bg-slate-800/50 rounded p-2"><span class="text-slate-500 block text-xs">PM2.5</span><span class="font-bold text-red-400">${zones[i]?.pm25_level || '--'} μg/m³</span></div>
+                                <div class="bg-slate-800/50 rounded p-2"><span class="text-slate-500 block text-xs">Speed</span><span class="font-bold text-blue-400">${zones[i]?.traffic_speed || '--'} km/h</span></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <h3 class="text-lg font-semibold text-white mb-4">All Metrics (Live)</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="text-slate-500 border-b border-slate-700"><tr><th class="text-left p-2">Time</th><th class="text-left p-2">Zone</th><th class="text-left p-2">PM2.5</th><th class="text-left p-2">Traffic Speed</th><th class="text-left p-2">Status</th></tr></thead>
+                        <tbody>
+                            ${zones.map((z, i) => `<tr class="border-b border-slate-800">
+                                <td class="p-2 text-slate-300">${formatAlmatyTime(getAlmatyTime())}</td>
+                                <td class="p-2 text-white">${zonesData[i]?.name}</td>
+                                <td class="p-2 ${(z.pm25_level || 0) > 100 ? 'text-red-400' : (z.pm25_level || 0) > 50 ? 'text-yellow-400' : 'text-emerald-400'}">${z.pm25_level || '--'}</td>
+                                <td class="p-2 text-blue-400">${z.traffic_speed || '--'}</td>
+                                <td class="p-2"><span class="px-2 py-1 rounded text-xs ${(z.pm25_level || 0) > 50 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-emerald-500/20 text-emerald-400'}">${(z.pm25_level || 0) > 50 ? 'Warning' : 'Normal'}</span></td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        function loadAISettingsPage() {
+            document.getElementById('ai-settings-content').innerHTML = `
+                <div class="space-y-6">
+                    <div class="p-4 rounded-xl border border-slate-700">
+                        <h3 class="font-semibold text-white mb-4"><i class="fas fa-exclamation-triangle text-yellow-400 mr-2"></i>Anomaly Detection Thresholds</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="text-sm text-slate-400">PM2.5 Critical Level</label><input type="number" value="100" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"></div>
+                            <div><label class="text-sm text-slate-400">Min Traffic Speed (km/h)</label><input type="number" value="15" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"></div>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl border border-slate-700">
+                        <h3 class="font-semibold text-white mb-4"><i class="fas fa-clock text-emerald-400 mr-2"></i>Update Intervals</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="text-sm text-slate-400">Metrics Update (seconds)</label><input type="number" value="15" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"></div>
+                            <div><label class="text-sm text-slate-400">Dashboard Refresh (seconds)</label><input type="number" value="15" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"></div>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl border border-slate-700">
+                        <h3 class="font-semibold text-white mb-4"><i class="fas fa-robot text-purple-400 mr-2"></i>AI Analysis</h3>
+                        <div class="space-y-3">
+                            <label class="flex items-center gap-3"><input type="checkbox" checked class="w-4 h-4 rounded bg-slate-800 border-slate-600"><span class="text-slate-300">Auto-generate insights on anomaly</span></label>
+                            <label class="flex items-center gap-3"><input type="checkbox" checked class="w-4 h-4 rounded bg-slate-800 border-slate-600"><span class="text-slate-300">Enable trend analysis</span></label>
+                            <label class="flex items-center gap-3"><input type="checkbox" checked class="w-4 h-4 rounded bg-slate-800 border-slate-600"><span class="text-slate-300">Send notifications on critical alerts</span></label>
+                        </div>
+                    </div>
+                    <button class="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium">Save Settings</button>
+                </div>
+            `;
+        }
+        
+        function loadSettingsPage() {
+            document.getElementById('settings-content').innerHTML = `
+                <div class="space-y-6">
+                    <div class="p-4 rounded-xl border border-slate-700">
+                        <h3 class="font-semibold text-white mb-4"><i class="fas fa-globe text-blue-400 mr-2"></i>Location & Time</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="text-sm text-slate-400">City</label><input type="text" value="Almaty" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"></div>
+                            <div><label class="text-sm text-slate-400">Timezone</label><select class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white"><option>Asia/Almaty (UTC+6)</option></select></div>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl border border-slate-700">
+                        <h3 class="font-semibold text-white mb-4"><i class="fas fa-database text-emerald-400 mr-2"></i>Database Connection</h3>
+                        <div class="space-y-3">
+                            <div><label class="text-sm text-slate-400">Supabase URL</label><input type="text" value="nzruaharqytobdtpttnn.supabase.co" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white" disabled></div>
+                            <div><label class="text-sm text-slate-400">Connection Status</label><div class="mt-1 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-emerald-400">Connected</span></div></div>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl border border-slate-700">
+                        <h3 class="font-semibold text-white mb-4"><i class="fas fa-chart-line text-purple-400 mr-2"></i>API Endpoints</h3>
+                        <div class="space-y-2 text-sm font-mono">
+                            <div class="flex justify-between"><span class="text-slate-400">Health</span><span class="text-emerald-400">/health</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Dashboard</span><span class="text-emerald-400">/api/dashboard/summary</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Metrics</span><span class="text-emerald-400">/api/metrics/history</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Trigger</span><span class="text-emerald-400">/api/debug/trigger</span></div>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-xl border border-red-500/30 bg-red-500/5">
+                        <h3 class="font-semibold text-red-400 mb-4"><i class="fas fa-exclamation-triangle mr-2"></i>Debug Options</h3>
+                        <button onclick="triggerAnomaly()" class="w-full py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg">Test Anomaly Trigger</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function generateAIInsights(metrics) {
+            if (!metrics || metrics.length === 0) return `<div class="text-center py-8"><i class="fas fa-database text-slate-600 text-3xl mb-3"></i><p class="text-slate-500 text-sm">Collecting data...</p></div>`;
+            
+            const latest = metrics[metrics.length - 1] || {};
+            const prev = metrics[metrics.length - 2] || {};
+            const pm25Change = latest.pm25 - (prev.pm25 || latest.pm25);
+            const speedChange = latest.speed - (prev.speed || latest.speed);
+            
+            const insights = [];
+            if (latest.pm25 > 100) insights.push({ severity: 'high', title: 'CRITICAL: Air Quality Alert', summary: `PM2.5 levels at ${latest.pm25}μg/m³. Immediate action required.`, actions: ['Activate air purification alerts', 'Issue public health warning'] });
+            else if (latest.pm25 > 50) insights.push({ severity: 'med', title: 'WARNING: Elevated PM2.5', summary: `Air quality moderate at ${latest.pm25}μg/m³.`, actions: ['Monitor levels closely'] });
+            else insights.push({ severity: 'low', title: 'OK: Air Quality Normal', summary: `Air quality is good at ${latest.pm25}μg/m³.`, actions: ['Continue monitoring'] });
+            
+            if (latest.speed < 20) insights.push({ severity: 'high', title: 'ALERT: Severe Traffic Congestion', summary: `Traffic speed critically low at ${latest.speed}km/h.`, actions: ['Activate traffic control'] });
+            
+            return insights.map(insight => `<div class="p-4 rounded-xl border ${insight.severity === 'high' ? 'border-red-500/40 bg-red-500/10' : insight.severity === 'med' ? 'border-yellow-500/40 bg-yellow-500/10' : 'border-emerald-500/40 bg-emerald-500/10'}">
+                <div class="flex justify-between mb-2">
+                    <span class="px-2 py-1 rounded-lg text-xs uppercase ${insight.severity === 'high' ? 'bg-red-500/30 text-red-400' : insight.severity === 'med' ? 'bg-yellow-500/30 text-yellow-400' : 'bg-emerald-500/30 text-emerald-400'}">${insight.severity}</span>
+                    <span class="text-xs text-slate-500">${formatAlmatyTime(getAlmatyTime())}</span>
+                </div>
+                <h4 class="text-sm font-semibold text-white mb-1">${insight.title}</h4>
+                <p class="text-sm text-slate-300 mb-2">${insight.summary}</p>
+                <p class="text-xs text-slate-500 uppercase mb-1">Action Plan:</p>
+                ${insight.actions.map(a => `<div class="text-xs text-slate-400 flex gap-2 mb-1"><span class="text-emerald-400">✓</span>${a}</div>`).join('')}
+            </div>`).join('');
+        }
+        
+        function updateDashboardData() {
+            if (currentPage !== 'dashboard') return;
+            
+            fetchDashboard().then(data => {
+                const summary = data.summary || {};
+                const metrics = data.metrics || [];
+                const kpis = summary.kpis || {};
+                
+                let insights = [];
+                fetch(API_URL + '/dashboard/insights/active').then(r => r.json()).then(i => insights = i).catch(() => {});
+                
+                const stats = [
+                    { title: 'Air Quality (PM2.5)', value: kpis.avgAirQuality || '--', unit: 'μg/m³', color: (kpis.avgAirQuality || 0) > 100 ? 'text-red-400' : 'text-emerald-400' },
+                    { title: 'Traffic Flow', value: kpis.trafficFlow || '--', unit: 'km/h', color: 'text-blue-400' },
+                    { title: 'Active Alerts', value: kpis.activeAlerts || 0, color: (kpis.activeAlerts || 0) > 0 ? 'text-red-400' : 'text-slate-400' },
+                    { title: 'System Health', value: kpis.systemHealth || '...', color: kpis.systemHealth === 'Healthy' ? 'text-emerald-400' : 'text-yellow-400' }
+                ];
+                
+                const statEls = document.querySelectorAll('.stat-value');
+                const statLabels = ['Air Quality (PM2.5)', 'Traffic Flow', 'Active Alerts', 'System Health'];
+                stats.forEach((s, i) => {
+                    if (statEls[i]) {
+                        statEls[i].innerHTML = `${s.value}${s.unit ? '<span class="text-sm text-slate-500 ml-1">' + s.unit + '</span>' : ''}`;
+                        statEls[i].className = `text-3xl font-bold ${s.color}`;
+                    }
+                });
+                
+                const recentMetrics = metrics.slice(-30).map(d => ({
+                    pm25: d.pm25_level, speed: d.traffic_speed
+                }));
+                
+                if (chartMain) {
+                    chartMain.data.labels = recentMetrics.map((_, i) => `${String(i).padStart(2, '0')}:00`);
+                    chartMain.data.datasets[0].data = recentMetrics.map(d => d.pm25);
+                    chartMain.data.datasets[1].data = recentMetrics.map(d => d.speed);
+                    chartMain.update();
+                }
+                if (chartAir) {
+                    chartAir.data.labels = recentMetrics.map((_, i) => `${String(i).padStart(2, '0')}:00`);
+                    chartAir.data.datasets[0].data = recentMetrics.map(d => d.pm25);
+                    chartAir.update();
+                }
+                if (chartTraffic) {
+                    chartTraffic.data.labels = recentMetrics.map((_, i) => `${String(i).padStart(2, '0')}:00`);
+                    chartTraffic.data.datasets[0].data = recentMetrics.map(d => d.speed);
+                    chartTraffic.update();
+                }
+                
+                document.querySelector('.fa-sync-alt')?.closest('button')?.classList.remove('animate-spin');
+            });
+        }
+        
+        loadDashboard();
+        setInterval(updateDashboardData, 15000);
+    </script>
+</body>
+</html>

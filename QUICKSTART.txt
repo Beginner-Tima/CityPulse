@@ -1,0 +1,21 @@
+@echo off
+echo ========================================
+echo CityPulse AI - Quick Start
+echo ========================================
+echo.
+echo BACKEND: http://localhost:5000 (must be running)
+echo.
+echo To start frontend:
+echo 1. Open new terminal
+echo 2. cd C:\Users\akzha\citypulse-backend
+echo 3. npx serve -s . -l 3000
+echo.
+echo Or just open dashboard.html in browser:
+echo C:\Users\akzha\citypulse-backend\dashboard.html
+echo.
+echo For Netlify deployment:
+echo 1. Push to GitHub
+echo 2. Connect to Netlify
+echo 3. Set env variables in Netlify
+echo.
+pause

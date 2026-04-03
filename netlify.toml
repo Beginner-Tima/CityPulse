@@ -1,0 +1,14 @@
+[build]
+  command = "echo 'Static site - no build required'"
+  publish = "."
+
+[[redirects]]
+  from = "/api/*"
+  to = "/index.js"
+  status = 200
+
+[functions]
+  directory = "."
+
+[[environment]]
+  SUPABASE_URL = "https://nzruaharqytobdtpttnn.supabase.co"
