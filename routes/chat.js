@@ -8,8 +8,11 @@ router.post('/', async (req, res) => {
         const { question, context } = req.body;
         const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
         
+        console.log('Chat request - API Key exists:', !!GEMINI_API_KEY);
+        
         if (!GEMINI_API_KEY) {
-            return res.json({ response: "🔧 AI requires GEMINI_API_KEY configuration. Please set it in environment variables." });
+            const fallback = generateFallbackResponse(question, context);
+            return res.json({ response: fallback });
         }
         
         const zonesData = (context?.zones || []).map(z => 
@@ -17,37 +20,26 @@ router.post('/', async (req, res) => {
         ).join('\n');
         
         const metricsData = (context?.metrics?.slice(-5) || []).map(m => 
-            `Time: ${new Date(m.created_at).toLocaleString('ru-RU', {timeZone: 'Asia/Almaty'})}, PM2.5: ${m.pm25_level}, Speed: ${m.traffic_speed}`
+            `Time: ${new Date(m.created_at).toLocaleString('ru-RU')}, PM2.5: ${m.pm25_level}, Speed: ${m.traffic_speed}`
         ).join('\n');
         
-        const prompt = `Ты — AI ассистент CityPulse для умного города Алматы, Казахстан. Твоя задача — помогать пользователям понимать городские метрики и давать полезные рекомендации.
+        const prompt = `You are an AI assistant for CityPulse Smart City Dashboard in Almaty, Kazakhstan.
 
-ТЕКУЩИЕ ДАННЫЕ ПО ЗОНАМ:
+CURRENT ZONE DATA:
 ${zonesData}
 
-ПОСЛЕДНИЕ МЕТРИКИ:
+RECENT METRICS:
 ${metricsData}
 
-ВОПРОС ПОЛЬЗОВАТЕЛЯ: ${question}
+USER QUESTION: ${question}
 
-Инструкции:
-1. Отвечай на русском или английском (как спрашивают)
-2. Будь конкретным — используй реальные числа из данных выше
-3. Если спрашивают про воздух — анализируй PM2.5
-4. Если спрашивают про трафик — анализируй скорость
-5. Давай практические рекомендации
-6. Отвечай кратко (2-3 предложения)`;
-        
+Answer briefly (1-2 sentences). Use the numbers above to be specific.`;
+
         const response = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
             {
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.8,
-                    maxOutputTokens: 300,
-                    topP: 0.9,
-                    topK: 40
-                }
+                generationConfig: { temperature: 0.8, maxOutputTokens: 300 }
             }
         );
         
@@ -55,11 +47,32 @@ ${metricsData}
         res.json({ response: text });
         
     } catch (error) {
-        console.error('Chat error:', error.response?.data || error.message);
-        res.json({ 
-            response: "🤖 I'm here to help! Ask me about:\n• Air quality (PM2.5) in any zone\n• Traffic conditions\n• Best/worst zone for air quality\n• Specific questions about Alatau, Bostandyk, or Medeu"
-        });
+        console.error('Chat error:', error.message);
+        const fallback = generateFallbackResponse(req.body.question, req.body.context);
+        res.json({ response: fallback });
     }
 });
+
+function generateFallbackResponse(question, context) {
+    const q = (question || '').toLowerCase();
+    const zones = context?.zones || [];
+    
+    if (q.includes('air') || q.includes('pm25') || q.includes('воздух')) {
+        const avg = zones.length ? Math.round(zones.reduce((s, z) => s + (z.pm25_level || 0), 0) / zones.length) : 0;
+        if (avg > 80) return `⚠️ Air quality is UNHEALTHY. Average PM2.5: ${avg} μg/m³. Stay indoors.`;
+        if (avg > 50) return `🟡 Air quality is MODERATE. Average PM2.5: ${avg} μg/m³.`;
+        return `✅ Air quality is GOOD. Average PM2.5: ${avg} μg/m³.`;
+    }
+    
+    if (q.includes('traffic') || q.includes('speed') || q.includes('трафик')) {
+        const avg = zones.length ? Math.round(zones.reduce((s, z) => s + (z.traffic_speed || 0), 0) / zones.length) : 0;
+        if (avg < 25) return `🚗 Traffic is HEAVY. Average speed: ${avg} km/h.`;
+        if (avg < 40) return `🚙 Traffic is MODERATE. Average speed: ${avg} km/h.`;
+        return `🛣️ Traffic is LIGHT. Average speed: ${avg} km/h.`;
+    }
+    
+    const zoneInfo = zones.map(z => `${z.name}: PM2.5=${z.pm25_level}, Traffic=${z.traffic_speed}`).join('. ');
+    return `📊 Current data: ${zoneInfo}. Ask about air quality or traffic!`;
+}
 
 export default router;

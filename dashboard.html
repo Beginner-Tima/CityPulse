@@ -116,20 +116,31 @@
             messages.scrollTop = messages.scrollHeight;
             
             try {
+                const dashboardData = await fetchDashboard();
+                const context = {
+                    metrics: dashboardData.metrics || [],
+                    zones: dashboardData.summary?.zones || []
+                };
+                
                 const res = await fetch(API_URL + '/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({question, context: {metrics: (await fetchDashboard()).metrics, zones: (await fetchDashboard()).summary.zones}})
+                    body: JSON.stringify({question: question, context: context})
                 });
+                
+                if (!res.ok) throw new Error('API error');
                 const data = await res.json();
+                
                 const msgs = messages.querySelectorAll('.fa-spinner');
                 if (msgs.length > 0) {
-                    msgs[msgs.length - 1].closest('.flex').innerHTML = `<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div><div class="bg-slate-800 rounded-xl p-3 text-slate-300">${data.response || 'I can help you understand the city metrics. Try asking about air quality or traffic in specific zones.'}</div>`;
+                    const responseText = data.response || 'No response from AI';
+                    msgs[msgs.length - 1].closest('.flex').innerHTML = `<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div><div class="bg-slate-800 rounded-xl p-3 text-slate-300">${responseText}</div>`;
                 }
             } catch(e) {
+                console.error('Chat error:', e);
                 const msgs = messages.querySelectorAll('.fa-spinner');
                 if (msgs.length > 0) {
-                    msgs[msgs.length - 1].closest('.flex').innerHTML = `<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div><div class="bg-slate-800 rounded-xl p-3 text-slate-300">I'm having trouble connecting to the AI. Try asking about current metrics - I can show you real-time data!</div>`;
+                    msgs[msgs.length - 1].closest('.flex').innerHTML = `<div class="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"><i class="fas fa-robot text-white text-sm"></i></div><div class="bg-slate-800 rounded-xl p-3 text-slate-300">Connection error. Try again.</div>`;
                 }
             }
         }
