@@ -17,8 +17,14 @@ export async function generateMockMetrics() {
     const now = new Date();
     
     for (const zoneId of ZONE_IDS) {
-        const pm25 = Math.round(randomInRange(15, 45));
-        const speed = Math.round(randomInRange(30, 65));
+        // Generate more varied metrics with occasional spikes
+        const basePM25 = Math.round(randomInRange(15, 45));
+        const baseSpeed = Math.round(randomInRange(30, 65));
+        
+        // Occasional anomaly (10% chance)
+        const isAnomaly = Math.random() < 0.1;
+        const pm25 = isAnomaly ? Math.round(randomInRange(80, 150)) : basePM25;
+        const speed = isAnomaly ? Math.round(randomInRange(5, 20)) : baseSpeed;
         
         metrics.push({
             zone_id: zoneId,
@@ -42,12 +48,12 @@ export async function generateMockMetrics() {
     return data;
 }
 
-export function startMetricsGenerator(intervalMs = 20000) {
-    console.log(`🚀 Starting metrics generator (every ${intervalMs/1000}s)...`);
+export function startMetricsGenerator(intervalMs = 300000) {
+    console.log(`🚀 Starting metrics generator (every ${intervalMs/1000}s = ${intervalMs/60000} min)...`);
     
-    // Generate immediately
+    // Generate immediately on startup
     generateMockMetrics();
     
-    // Then every interval
+    // Then every interval (5 minutes = 300000ms)
     setInterval(generateMockMetrics, intervalMs);
 }
