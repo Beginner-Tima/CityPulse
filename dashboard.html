@@ -34,26 +34,24 @@
         let chartMain = null, chartAir = null, chartTraffic = null;
         let currentPage = 'dashboard';
         
-        // Almaty timezone
-        const ALMATY_OFFSET = 6; // UTC+6
+        // Almaty timezone - properly convert to UTC+6
+        const ALMATY_OFFSET_HOURS = 6;
         
         function getAlmatyTime() {
             const now = new Date();
-            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-            const almaty = new Date(utc + (3600000 * ALMATY_OFFSET));
-            return almaty;
+            return new Date(now.getTime() + (ALMATY_OFFSET_HOURS * 60 * 60 * 1000));
         }
         
         function formatAlmatyTime(date) {
-            if (!(date instanceof Date)) date = new Date(date);
-            const almaty = new Date(date.getTime() + (ALMATY_OFFSET * 3600000));
-            return almaty.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-        }
-        
-        function getCurrentAlmatyTime() {
-            const now = new Date();
-            const options = { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-            return now.toLocaleTimeString('en-US', options);
+            try {
+                const d = new Date(date);
+                const almatyTime = new Date(d.getTime() + (ALMATY_OFFSET_HOURS * 60 * 60 * 1000));
+                const hours = String(almatyTime.getHours()).padStart(2, '0');
+                const minutes = String(almatyTime.getMinutes()).padStart(2, '0');
+                return `${hours}:${minutes}`;
+            } catch (e) {
+                return '--:--';
+            }
         }
         
         async function fetchDashboard() {

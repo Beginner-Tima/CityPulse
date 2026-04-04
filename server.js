@@ -59,5 +59,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('');
     
     startAnomalyDetection();
-    startMetricsGenerator(30000); // 30 seconds for visible changes during demo
+    startMetricsGenerator(30000); // 30 seconds for demo visibility
 });
