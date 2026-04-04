@@ -45,7 +45,15 @@
         }
         
         function formatAlmatyTime(date) {
-            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Almaty' });
+            if (!(date instanceof Date)) date = new Date(date);
+            const almaty = new Date(date.getTime() + (ALMATY_OFFSET * 3600000));
+            return almaty.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+        
+        function getCurrentAlmatyTime() {
+            const now = new Date();
+            const options = { timeZone: 'Asia/Almaty', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            return now.toLocaleTimeString('en-US', options);
         }
         
         async function fetchDashboard() {
@@ -468,22 +476,23 @@
                 });
                 
                 const recentMetrics = metrics.slice(-30).map(d => ({
+                    time: formatAlmatyTime(new Date(d.created_at)),
                     pm25: d.pm25_level, speed: d.traffic_speed
                 }));
                 
                 if (chartMain) {
-                    chartMain.data.labels = recentMetrics.map((_, i) => `${String(i).padStart(2, '0')}:00`);
+                    chartMain.data.labels = recentMetrics.map(d => d.time);
                     chartMain.data.datasets[0].data = recentMetrics.map(d => d.pm25);
                     chartMain.data.datasets[1].data = recentMetrics.map(d => d.speed);
                     chartMain.update();
                 }
                 if (chartAir) {
-                    chartAir.data.labels = recentMetrics.map((_, i) => `${String(i).padStart(2, '0')}:00`);
+                    chartAir.data.labels = recentMetrics.map(d => d.time);
                     chartAir.data.datasets[0].data = recentMetrics.map(d => d.pm25);
                     chartAir.update();
                 }
                 if (chartTraffic) {
-                    chartTraffic.data.labels = recentMetrics.map((_, i) => `${String(i).padStart(2, '0')}:00`);
+                    chartTraffic.data.labels = recentMetrics.map(d => d.time);
                     chartTraffic.data.datasets[0].data = recentMetrics.map(d => d.speed);
                     chartTraffic.update();
                 }
@@ -493,7 +502,7 @@
         }
         
         loadDashboard();
-        setInterval(updateDashboardData, 15000);
+        setInterval(updateDashboardData, 300000); // 5 minutes
     </script>
 </body>
 </html>
